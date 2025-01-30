@@ -1,5 +1,10 @@
 import json
-from src.adapters import ProviderAdapter, AnthropicAdapter, OpenAIAdapter, DeepseekAdapter
+from src.adapters import (
+    ProviderAdapter,
+    AnthropicAdapter,
+    OpenAIAdapter,
+    DeepseekAdapter,
+)
 from dotenv import load_dotenv
 import src.utils as utils
 from src.models import ARCTaskOutput, ARCPair
@@ -10,8 +15,19 @@ import argparse
 
 load_dotenv()
 
+
 class ARCTester:
-    def __init__(self, provider: str, model_name: str, save_submission_dir: str, overwrite_submission: bool, print_submission: bool, num_attempts: int, retry_attempts: int, print_logs: bool):
+    def __init__(
+        self,
+        provider: str,
+        model_name: str,
+        save_submission_dir: str,
+        overwrite_submission: bool,
+        print_submission: bool,
+        num_attempts: int,
+        retry_attempts: int,
+        print_logs: bool,
+    ):
         self.provider = self.init_provider(provider, model_name)
         self.save_submission_dir = save_submission_dir
         self.overwrite_submission = overwrite_submission
@@ -30,7 +46,7 @@ class ARCTester:
         ## To do: add other providers as models are added
         else:
             raise ValueError(f"Unsupported provider: {provider}")
-        
+
     def print_log(self, message: str):
         if self.print_logs:
             print(message)
@@ -56,7 +72,11 @@ class ARCTester:
         try:
             # Remove whitespace and parse the string as JSON
             parsed_data = json.loads(data.strip())
-            if isinstance(parsed_data, list) and 1 <= len(parsed_data) <= 30 and all(isinstance(item, int) for item in parsed_data):
+            if (
+                isinstance(parsed_data, list)
+                and 1 <= len(parsed_data) <= 30
+                and all(isinstance(item, int) for item in parsed_data)
+            ):
                 result = [[item] for item in parsed_data]
                 return result
         except json.JSONDecodeError:
@@ -71,7 +91,7 @@ class ARCTester:
         json_str_match = utils.regex_extract_json(response)
         if json_str_match:
             return json_str_match
-        
+
         # Try to extract JSON from code block
         json_code_block_match = utils.extract_json_from_code_block(response)
         if json_code_block_match:
@@ -81,9 +101,11 @@ class ARCTester:
         json_llm_match = self.provider.extract_json_from_response(response)
         if json_llm_match:
             return json_llm_match
-    
+
         # If all extraction methods fail, raise an exception
-        raise json.JSONDecodeError("Failed to extract valid JSON from the response", response, 0)
+        raise json.JSONDecodeError(
+            "Failed to extract valid JSON from the response", response, 0
+        )
 
     def parse_and_validate_json(self, response: str) -> ARCTaskOutput:
         """
@@ -107,13 +129,15 @@ class ARCTester:
         except:
             # If raw parsing fails, try to extract JSON from various formats
             parsed_json = self.extract_json_from_response(response)
-        
+
         # Validate the structure of the parsed JSON
-        if not isinstance(parsed_json, list) or not all(isinstance(row, list) for row in parsed_json):
+        if not isinstance(parsed_json, list) or not all(
+            isinstance(row, list) for row in parsed_json
+        ):
             raise ValueError("Invalid JSON structure: expected a list of lists")
-        
+
         return parsed_json
-        
+
     def predict_task_output(self, training_pairs: List[ARCPair], test_input: ARCPair):
         """
         Given a task, predict the test output. This reponse may need parsing.
@@ -127,12 +151,32 @@ class ARCTester:
         prompt = convert_task_pairs_to_prompt(training_pairs, test_input)
 
         self.print_log(f"Making prediction for task")
-        response = self.provider.make_prediction(prompt)
+        response, response_json = self.provider.make_prediction(prompt)
+        if self.save_submission_dir:
+            os.makedirs(self.save_submission_dir, exist_ok=True)
+            response_file = os.path.join(self.save_submission_dir, "response.json")
+            with open(response_file, "w") as f:
+                # Parse the response_json if it's a string, otherwise use it directly
+                try:
+                    if isinstance(response_json, str):
+                        parsed_json = json.loads(response_json)
+                    else:
+                        parsed_json = response_json
+                    json.dump(parsed_json, f, indent=2)
+                except json.JSONDecodeError:
+                    # If invalid JSON, write a sanitized version
+                    sanitized = {
+                        "error": "Invalid JSON response",
+                        "raw_response": str(response_json),
+                    }
+                    json.dump(sanitized, f, indent=2)
 
         # print(response)
         return response
 
-    def get_task_prediction(self, training_pairs: List[ARCPair], test_input: ARCPair) -> ARCTaskOutput:
+    def get_task_prediction(
+        self, training_pairs: List[ARCPair], test_input: ARCPair
+    ) -> ARCTaskOutput:
         """
         challenge_tasks: dict a list of tasks
         task_id: str the id of the task we want to get a prediction for
@@ -152,9 +196,9 @@ class ARCTester:
             self.print_log(f"JSON parsing failed: {e}")
             # Handle the error (e.g., return a default value, retry, or raise an exception)
             raise
-        
+
         return json_response
-    
+
     def generate_task_solution(self, data_dir, task_id):
         """
         data_dir: str, the directory of the data set to run
@@ -163,15 +207,19 @@ class ARCTester:
         retry_attempts: int the number of times to retry a prediction if it fails
         save_submission: bool, whether to save the submission to a file after each task
         """
-        
+
         self.print_log(f"Running task {task_id}")
         utils.validate_data(data_dir, task_id)
 
         # Logic for overwrite. If save_submission_dir is provided, check if the submission already exists
-        if self.save_submission_dir and utils.submission_exists(self.save_submission_dir, task_id) and not self.overwrite_submission:
+        if (
+            self.save_submission_dir
+            and utils.submission_exists(self.save_submission_dir, task_id)
+            and not self.overwrite_submission
+        ):
             self.print_log(f"Submission for task {task_id} already exists, skipping")
             return
-        
+
         task_attempts = []
 
         train_pairs = utils.get_train_pairs_from_task(data_dir, task_id)
@@ -192,10 +240,11 @@ class ARCTester:
                 # Try to get a prediction, with retries in case of failure
                 for retry in range(self.retry_attempts):
                     try:
-                        self.print_log(f"    Predicting attempt #{attempt}, retry #{retry + 1}")
+                        self.print_log(
+                            f"    Predicting attempt #{attempt}, retry #{retry + 1}"
+                        )
                         prediction = self.get_task_prediction(
-                            training_pairs=train_pairs,
-                            test_input=pair
+                            training_pairs=train_pairs, test_input=pair
                         )
 
                         if prediction is not None:
@@ -203,7 +252,9 @@ class ARCTester:
                             pair_attempts[attempt_key] = prediction
                             break  # Break the retry loop if prediction is successful
                         else:
-                            self.print_log("    Prediction returned None, possibly due to rate limiting")
+                            self.print_log(
+                                "    Prediction returned None, possibly due to rate limiting"
+                            )
                     except Exception as e:
                         self.print_log(f"Retrying: {e}")
 
@@ -221,42 +272,79 @@ class ARCTester:
             if self.save_submission_dir:
                 utils.save_submission(self.save_submission_dir, task_id, task_attempts)
         else:
-            self.print_log(f"No valid predictions for task {task_id}, skipping submission")
+            self.print_log(
+                f"No valid predictions for task {task_id}, skipping submission"
+            )
 
         return task_attempts if task_attempts else None
-    
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ARC Tester")
-    parser.add_argument("--data_dir", type=str, help="Data set to run. Configure in config/config.json")
+    parser.add_argument(
+        "--data_dir", type=str, help="Data set to run. Configure in config/config.json"
+    )
     parser.add_argument("--task_id", type=str, help="Specific task ID to run")
-    parser.add_argument("--provider", type=str, default="anthropic", help="Provider to use")
-    parser.add_argument("--model", type=str, default="claude-3-5-sonnet-20241022", help="Model to use")
+    parser.add_argument(
+        "--provider", type=str, default="anthropic", help="Provider to use"
+    )
+    parser.add_argument(
+        "--model", type=str, default="claude-3-5-sonnet-20241022", help="Model to use"
+    )
     parser.add_argument(
         "--save_submission_dir",
         type=str,
         metavar="FOLDER_NAME",
-        help="Folder name to save the submissions under Ex: 'submissions/claude-3-5-sonnet-20241022'"
+        help="Folder name to save the submissions under Ex: 'submissions/claude-3-5-sonnet-20241022'",
     )
-    parser.add_argument("--overwrite_submission", action="store_true", help="Overwrite the submission if it already exists")
-    parser.add_argument("--print_submission", action="store_true", help="Print the submission to the console after each task")
-    parser.add_argument("--task_set", type=str, default="public_eval", choices=["public_eval", "public_training"], help="Task set to run")
-    parser.add_argument("--num_attempts", type=int, default=2, help="Number of attempts for each prediction")
-    parser.add_argument("--retry_attempts", type=int, default=2, help="Number of retry attempts for failed predictions")
-    parser.add_argument("--print_logs", action="store_true", help="Disable printing logs to console (default: False)")
+    parser.add_argument(
+        "--overwrite_submission",
+        action="store_true",
+        help="Overwrite the submission if it already exists",
+    )
+    parser.add_argument(
+        "--print_submission",
+        action="store_true",
+        help="Print the submission to the console after each task",
+    )
+    parser.add_argument(
+        "--task_set",
+        type=str,
+        default="public_eval",
+        choices=["public_eval", "public_training"],
+        help="Task set to run",
+    )
+    parser.add_argument(
+        "--num_attempts",
+        type=int,
+        default=2,
+        help="Number of attempts for each prediction",
+    )
+    parser.add_argument(
+        "--retry_attempts",
+        type=int,
+        default=2,
+        help="Number of retry attempts for failed predictions",
+    )
+    parser.add_argument(
+        "--print_logs",
+        action="store_true",
+        help="Disable printing logs to console (default: False)",
+    )
     args = parser.parse_args()
 
     arc_solver = ARCTester(
         provider=args.provider,
         model_name=args.model,
-        save_submission_dir=args.save_submission_dir, 
+        save_submission_dir=args.save_submission_dir,
         overwrite_submission=args.overwrite_submission,
         print_submission=args.print_submission,
         num_attempts=args.num_attempts,
         retry_attempts=args.retry_attempts,
-        print_logs=args.print_logs
+        print_logs=args.print_logs,
     )
-   
+
     arc_solver.generate_task_solution(
         data_dir=args.data_dir,
-        task_id=args.task_id, 
+        task_id=args.task_id,
     )
